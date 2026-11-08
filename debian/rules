@@ -76,12 +76,12 @@ libcurl_config: quiche_build
 		--with-openssl=$(BUILD_SRC_DIR)/quiche/boringssl \
 		--with-quiche=$(BUILD_DEST_DIR) \
 		--with-nghttp2 \
+		--with-brotli \
+		--with-zstd \
 		--without-libpsl \
 		--without-libidn2 \
 		--without-librtmp \
 		--without-libssh2 \
-		--without-brotli \
-		--without-zstd \
 		--disable-ldap \
 		--disable-ldaps \
 		--disable-rtsp \
