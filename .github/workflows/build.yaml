@@ -1,0 +1,193 @@
+name: Build mpv deb (Ubuntu 22.04)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+env:
+  MPV_REPO:   https://github.com/mpv-player/mpv.git
+  MPV_REF:    master
+
+  QUICHE_REPO:        https://github.com/cloudflare/quiche.git
+  QUICHE_REF:         master
+  # QUICHE_REF:         0.30.0
+  QUICHE_VENDOR_REPO: https://github.com/spvkgn/quiche_vendor.git
+
+  CURL_REPO:  https://github.com/curl/curl.git
+  CURL_REF:   curl-8_23_0
+
+  FFMPEG_REPO: https://github.com/FFmpeg/FFmpeg.git
+  FFMPEG_REF:  n8.1.3
+
+  NV_CODEC_HEADERS_REPO: https://github.com/FFmpeg/nv-codec-headers.git
+  NV_CODEC_HEADERS_REF:  n8.1.24.15
+
+  VULKAN_HEADERS_REPO: https://github.com/KhronosGroup/Vulkan-Headers.git
+  VULKAN_HEADERS_REF:  v1.4.321
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Репозиторий упаковки (в нём лежит debian/)
+      # ------------------------------------------------------------------
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Клонируем исходники mpv и накатываем на них наш debian/
+      # ------------------------------------------------------------------
+      - name: Clone mpv source
+        run: |
+          git clone --depth 1 --branch "${MPV_REF}" "${MPV_REPO}" mpv
+          rm -rf mpv/debian
+          cp -a debian mpv/
+          mkdir -p mpv/build_deps
+
+      # ------------------------------------------------------------------
+      # 3. Клонируем все build_deps
+      # ------------------------------------------------------------------
+      - name: Clone build_deps
+        working-directory: mpv/build_deps
+        run: |
+          mkdir -p .
+          # quiche: нужны подмодули (boringssl)
+          git clone --recursive --depth 1 --branch "${QUICHE_REF}" "${QUICHE_REPO}" quiche
+          # curl
+          git clone --depth 1 --branch "${CURL_REF}" "${CURL_REPO}" curl
+          # FFmpeg (в нём есть RELEASE, который читает debian/rules)
+          git clone --depth 1 --branch "${FFMPEG_REF}" "${FFMPEG_REPO}" ffmpeg
+          # nv-codec-headers
+          git clone --depth 1 --branch "${NV_CODEC_HEADERS_REF}" "${NV_CODEC_HEADERS_REPO}" nv-codec-headers
+          # Vulkan-Headers
+          git clone --depth 1 --branch "${VULKAN_HEADERS_REF}" "${VULKAN_HEADERS_REPO}" vulkan-headers
+
+      # ------------------------------------------------------------------
+      # 4. Vendor для quiche (используется при --offline)
+      # ------------------------------------------------------------------
+      - name: Vendor quiche dependencies
+        working-directory: mpv/build_deps/quiche
+        run: |
+          git clone --depth 1 "${QUICHE_VENDOR_REPO}" /tmp/quiche_vendor
+          cp -r /tmp/quiche_vendor/.cargo /tmp/quiche_vendor/vendor .
+
+      # ------------------------------------------------------------------
+      # 5. Гарантируем наличие MPV_VERSION и VERSION в корне исходников
+      #    (debian/rules их читает/правит через sed)
+      # ------------------------------------------------------------------
+      - name: Ensure MPV_VERSION / VERSION exist
+        working-directory: mpv
+        run: |
+          if [ ! -f MPV_VERSION ]; then
+            MVER=$(grep -oP "version:\s*'\K[^']+" meson.build | head -1)
+            [ -n "$MVER" ] || MVER="0.40.0"
+            echo "$MVER" > MPV_VERSION
+          fi
+          [ -f VERSION ] || echo "UNKNOWN" > VERSION
+
+      # ------------------------------------------------------------------
+      # 6. Rust 1.88 из PPA
+      # ------------------------------------------------------------------
+      - name: Add Rust PPA and install cargo-1.88
+        run: |
+          sudo add-apt-repository -y ppa:rust-toolchain/staging
+          sudo apt-get install -y cargo-1.88
+
+      # ------------------------------------------------------------------
+      # 7. Пакетные инструменты
+      # ------------------------------------------------------------------
+      - name: Install packaging tools
+        run: |
+          sudo apt-get install -y \
+            devscripts \
+            equivs \
+            quilt \
+            fakeroot \
+            build-essential \
+            dpkg-dev \
+            pkg-config
+
+      # ------------------------------------------------------------------
+      # 8. Build-Depends из debian/control
+      # ------------------------------------------------------------------
+      - name: Install build dependencies
+        working-directory: mpv
+        run: |
+          sudo add-apt-repository -n -y ppa:spvkgn/build-tools
+          sudo add-apt-repository -n -y ppa:spvkgn/mpv-ffmpeg-git
+          sudo apt-get update
+          sudo apt-get remove -y libunwind-14-dev
+          sudo mk-build-deps --install --remove \
+            --tool='apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes' \
+            debian/control
+
+      # ------------------------------------------------------------------
+      # 9. Формируем корректный changelog (формат <2 симв.><YYMMDD>.<hash7>…)
+      #    — иначе регулярки DEB_MPV_REVISION / DEB_FFMPEG_REVISION
+      #    из debian/rules дадут мусор, и итоговый .deb получит битую версию.
+      # ------------------------------------------------------------------
+      - name: Prepare debian/changelog
+        working-directory: mpv
+        env:
+          DEBEMAIL: "actions@github.com"
+          DEBFULLNAME: "GitHub Actions"
+        run: |
+          if [ ! -f debian/changelog ] || grep -q "Fake entry" debian/changelog; then
+            D=$(date +%y%m%d)
+            SHA=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "0000000")
+            FD=$(cd build_deps/ffmpeg && git log -1 --format=%ct 2>/dev/null \
+                 | xargs -r -I{} date -u -d @{} +%y%m%d 2>/dev/null \
+                 || date -u +%y%m%d)
+            FSHA=$(cd build_deps/ffmpeg && git rev-parse --short=7 HEAD 2>/dev/null || echo "0000000")
+            VER="0.${D}.${SHA}+ffmpeg8.0-ff${FD}.${FSHA}~ubuntu22.04"
+
+            rm -f debian/changelog
+            dch --create \
+              --package mpv \
+              --newversion "${VER}" \
+              --distribution jammy \
+              --urgency medium \
+              "Automated build from GitHub Actions."
+          fi
+
+      # ------------------------------------------------------------------
+      # 10. Сборка (debian/rules сам соберёт quiche/curl/ffmpeg/…)
+      # ------------------------------------------------------------------
+      - name: Build package
+        working-directory: mpv
+        env:
+          DEB_BUILD_OPTIONS: "parallel=$(nproc) noddebs"
+        run: |
+          dpkg-checkbuilddeps
+          fakeroot dpkg-buildpackage -b -us -uc -j"$(nproc)"
+
+      - name: Test with pkg-config
+        if: always()
+        working-directory: mpv
+        run: |
+          find build_deps/quiche/target -name libssl.a
+          ls -la build_libs/lib/lib{ssl,crypto,quiche}.a
+          ls build_libs/include/openssl/ssl.h build_libs/include/openssl/nid.h build_libs/include/quiche.h
+          PKG_CONFIG_PATH=$PWD/build_libs/lib/pkgconfig pkg-config --modversion quiche
+          PKG_CONFIG_PATH=$PWD/build_libs/lib/pkgconfig pkg-config --static --libs libcurl | tr ' ' '\n' | grep -E 'quiche|ssl|crypto'
+
+      # ------------------------------------------------------------------
+      # 11. Артефакты
+      # ------------------------------------------------------------------
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          cp *.deb artifacts/ 2>/dev/null || true
+          cp *.changes artifacts/ 2>/dev/null || true
+          ls -lh artifacts/ || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpv-debs-ubuntu2204
+          path: artifacts/
+          if-no-files-found: warn

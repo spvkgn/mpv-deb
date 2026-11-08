@@ -1,0 +1,183 @@
+Source: mpv
+Section: video
+Priority: optional
+Maintainer: spvkgn <spvkgn@launchpad.net>
+Standards-Version: 4.1.2
+Homepage: http://mpv.io/
+Build-Depends:
+ debhelper-compat (= 13),
+ autoconf,
+ automake,
+ cargo-1.88,
+ cmake,
+ git,
+ golang-go,
+ ladspa-sdk,
+ libaom-dev,
+ libarchive-dev (>= 3.4),
+ libasound2-dev [linux-any],
+ libass-dev,
+ libclang-dev,
+ libbluray-dev,
+ libbs2b-dev,
+ libcdio-dev,
+ libcdio-paranoia-dev,
+ libdisplay-info-dev,
+ libdav1d-dev,
+ libdrm-dev (>= 2.4.74),
+ libdvdnav-dev,
+ libegl-dev [linux-any],
+ libfdk-aac-dev,
+ libfontconfig1-dev,
+ libfreetype6-dev,
+ libfribidi-dev,
+ libgbm-dev,
+ libgl-dev,
+ libgcrypt20-dev,
+ libgl1-mesa-dev,
+ libgles2-mesa-dev,
+ libgme-dev,
+ libgnutls28-dev,
+ libgsm1-dev,
+ libharfbuzz-dev,
+ libjack-jackd2-dev,
+ libjpeg-dev,
+ liblcms2-dev (>= 2.6~),
+ liblircclient-dev,
+ liblua5.2-dev,
+ liblzma-dev,
+ libmodplug-dev,
+ libmp3lame-dev,
+ libmujs-dev,
+ libmysofa-dev,
+ libncurses5-dev,
+ libncursesw5-dev,
+ libnuma-dev,
+ libopus-dev,
+ libpipewire-0.2-dev | libpipewire-0.3-dev [linux-any],
+ libplacebo-dev (>= 6.338),
+ libpulse-dev,
+ librubberband-dev,
+ libsixel-dev,
+ libsndio-dev,
+ libsoxr-dev,
+ libspeex-dev,
+ libssh-gcrypt-dev,
+ libtool,
+ libuchardet-dev,
+ libunistring-dev,
+ libv4l-dev [!hurd-any],
+ libva-dev,
+ libvdpau-dev,
+ libvidstab-dev,
+ libvorbis-dev,
+ libvpx-dev,
+ libwavpack-dev,
+ libwayland-dev (>= 1.15.0) [linux-any],
+ libwebp-dev,
+ libx11-dev,
+ libx264-dev,
+ libx265-dev,
+ libxext-dev,
+ libxinerama-dev,
+ libxkbcommon-dev [linux-any],
+ libxml2-dev,
+ libxpresent-dev,
+ libxrandr-dev,
+ libxss-dev,
+ libxv-dev,
+ libxvidcore-dev,
+ libzimg-dev,
+ meson (>= 0.62.0),
+ nasm,
+ ninja-build,
+ perl,
+ pkgconf,
+ python3-docutils,
+ wayland-protocols,
+ yasm,
+ zlib1g-dev
+
+Package: mpv
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: xdg-utils, yt-dlp
+Multi-Arch: foreign
+Description: video player based on MPlayer/mplayer2
+ mpv is a movie player based on MPlayer and mplayer2. It supports a wide
+ variety of video file formats, audio and video codecs, and subtitle types.
+ .
+ Changes from mplayer2 to mpv include:
+  * Removal of lots of unneeded code to encourage developer activity
+  * Better OSD rendering
+  * Cleaned up terminal output
+  * Improved OpenGL output
+  * Encoding functionality (replacement for mencoder)
+  * Wayland support
+  * Support for playing URLs of popular streaming sites
+  * Screenshot improvements
+  * ...
+ See mpv(1) for more info regarding changes between MPlayer, mplayer2 and mpv.
+
+Package: libmpv2
+Section: libs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: yt-dlp
+Pre-Depends: ${misc:Pre-Depends}
+Multi-Arch: same
+Description: video player based on MPlayer/mplayer2 (client library)
+ mpv is a movie player based on MPlayer and mplayer2. It supports a wide
+ variety of video file formats, audio and video codecs, and subtitle types.
+ .
+ This package provides a client library that can be used to embed mpv in other
+ applications.
+
+Package: libmpv-dev
+Section: libdevel
+Architecture: any
+Depends:
+ libmpv2 (= ${binary:Version}),
+ libarchive-dev (>= 3.4),
+ libasound2-dev [linux-any],
+ libass-dev,
+ libbluray-dev,
+ libcdio-dev,
+ libcdio-paranoia-dev,
+ libdisplay-info-dev,
+ libdrm-dev (>= 2.4.75),
+ libdvdnav-dev,
+ libegl-dev [linux-any],
+ libgbm-dev,
+ libgl-dev,
+ libjack-dev,
+ libjpeg-dev,
+ liblcms2-dev (>= 2.6~),
+ liblua5.2-dev,
+ libmujs-dev,
+ libpipewire-0.3-dev [linux-any],
+ libplacebo-dev (>= 6.338),
+ libpulse-dev,
+ librubberband-dev,
+ libsixel-dev,
+ libsndio-dev,
+ libuchardet-dev,
+ libva-dev,
+ libvdpau-dev,
+ libwayland-dev (>= 1.15.0) [linux-any],
+ libx11-dev,
+ libxinerama-dev,
+ libxkbcommon-dev [linux-any],
+ libxpresent-dev,
+ libxrandr-dev,
+ libxss-dev,
+ libxv-dev,
+ libzimg-dev,
+ wayland-protocols,
+ ${misc:Depends}
+Multi-Arch: same
+Description: video player based on MPlayer/mplayer2 (client library dev files)
+ mpv is a movie player based on MPlayer and mplayer2. It supports a wide
+ variety of video file formats, audio and video codecs, and subtitle types.
+ .
+ This package provides development files for libmpv.

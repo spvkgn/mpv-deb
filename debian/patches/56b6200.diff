@@ -1,0 +1,11 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1729,7 +1729,7 @@
+           docutils_wrapper, rst2man,
+           '--record-dependencies', '@DEPFILE@',
+           '--strip-elements-with-class=contents',
+-          '--output=@OUTPUT@', '@INPUT@'],
++          '@INPUT@', '@OUTPUT@'],
+         depfile: 'mpv.1.dep',
+         install: true,
+         install_tag: 'man',

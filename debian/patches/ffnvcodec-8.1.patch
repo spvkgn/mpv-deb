@@ -1,0 +1,11 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1392,7 +1392,7 @@
+ endif
+ 
+ # hwaccel
+-ffnvcodec = dependency('ffnvcodec', version: '>= 11.1.5.1', required: false)
++ffnvcodec = dependency('ffnvcodec', version: '>= 8.1.24.15', required: false)
+ features += {'ffnvcodec': ffnvcodec.found()}
+ if features['ffnvcodec']
+     dependencies += ffnvcodec

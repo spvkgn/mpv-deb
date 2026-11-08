@@ -1,0 +1,197 @@
+#! /usr/bin/make -f
+
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/pkg-info.mk
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+#export RUST_BACKTRACE=full
+
+OPTIMIZE = $(shell dpkg-buildflags --query-features optimize 2>/dev/null || echo fail)
+ifneq ($(OPTIMIZE), fail)
+	DEB_BUILD_MAINT_OPTIONS += optimize=-lto
+endif
+
+# https://lists.debian.org/debian-devel/2015/12/msg00262.html
+export DEB_BUILD_OPTIONS += noddebs
+
+BUILD_SRC_DIR = $(CURDIR)/build_deps
+BUILD_DEST_DIR = $(CURDIR)/build_libs
+
+# BSSL_BUILD = $(BUILD_SRC_DIR)/quiche/deps/boringssl/build
+# BSSL_INCLUDE = $(BUILD_SRC_DIR)/quiche/deps/boringssl/src/include
+
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+	NUMJOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+	MFLAGS += -j$(NUMJOBS)
+endif
+
+DEB_MPV_REVISION=$(shell echo $(DEB_VERSION) | sed -r 's/^.{2}([0-9]{6})[0-9]*\.(.{7}).+$$/\1.\2/')
+DEB_FFMPEG_REVISION=$(shell echo $(DEB_VERSION) | sed -r 's/.+-.{2}([0-9]{6})[0-9]*\.(.{7}).+$$/\1.\2/')
+DEB_MPV_VERSION=$(shell cat MPV_VERSION | cut -d- -f1)-$(shell echo $(DEB_MPV_REVISION) | cut -d. -f1)+ffmpeg$(shell cat build_deps/ffmpeg/RELEASE | sed 's/\.git//')-$(shell echo $(DEB_FFMPEG_REVISION) | cut -d. -f1)~$(shell echo $(DEB_VERSION) | grep -Po '.*~ubuntu\K\d+\.\d+')
+
+%:
+	dh $@
+
+prepare_build:
+	mkdir -p $(BUILD_DEST_DIR)
+
+quiche_build: prepare_build
+	cd $(BUILD_SRC_DIR)/quiche && \
+		cargo-1.88 build --package quiche --release --features ffi --offline
+	install -Dm644 $(BUILD_SRC_DIR)/quiche/quiche/include/quiche.h $(BUILD_DEST_DIR)/include/quiche.h
+	install -Dm644 $(BUILD_SRC_DIR)/quiche/target/release/libquiche.a $(BUILD_DEST_DIR)/lib/libquiche.a
+	install -d $(BUILD_DEST_DIR)/include/openssl $(BUILD_DEST_DIR)/lib/pkgconfig
+	bssl_lib=$$(find $(BUILD_SRC_DIR)/quiche/target/release/build \
+		-path '*/out/build/libssl.a' | head -1); \
+	if [ -z "$$bssl_lib" ]; then \
+		echo "ERROR: libssl.a not found under target/release/build/*/out/build" >&2; \
+		find $(BUILD_SRC_DIR)/quiche/target/release/build -name 'lib*.a' >&2; \
+		exit 1; \
+	fi; \
+	bssl_build=$$(dirname "$$bssl_lib"); \
+	bssl_out=$$(dirname "$$bssl_build"); \
+	install -m644 "$$bssl_build/libssl.a"    $(BUILD_DEST_DIR)/lib/libssl.a; \
+	install -m644 "$$bssl_build/libcrypto.a" $(BUILD_DEST_DIR)/lib/libcrypto.a; \
+	if [ -d "$$bssl_out/boringssl/include/openssl" ]; then \
+		cp -a "$$bssl_out/boringssl/include/openssl/." $(BUILD_DEST_DIR)/include/openssl/; \
+	fi; \
+	if [ -d "$$bssl_build/include/openssl" ]; then \
+		cp -a "$$bssl_build/include/openssl/." $(BUILD_DEST_DIR)/include/openssl/; \
+	fi; \
+	if ! [ -f $(BUILD_DEST_DIR)/include/openssl/ssl.h ]; then \
+		echo "ERROR: BoringSSL headers not found (ssl.h missing)" >&2; \
+		find $(BUILD_SRC_DIR)/quiche/target/release/build -path '*openssl/ssl.h' >&2; \
+		exit 1; \
+	fi
+	printf 'prefix=%s\nexec_prefix=$${prefix}\nlibdir=$${prefix}/lib\nincludedir=$${prefix}/include\n\nName: quiche\nDescription: QUIC/HTTP3 library\nVersion: 0.24.0\nLibs: -L$${libdir} -lquiche -lssl -lcrypto -ldl -lpthread -lm\nCflags: -I$${includedir}\n' \
+		"$(BUILD_DEST_DIR)" > $(BUILD_DEST_DIR)/lib/pkgconfig/quiche.pc
+
+libcurl_config: quiche_build
+	if [ ! -x $(BUILD_SRC_DIR)/curl/configure ]; then \
+		cd $(BUILD_SRC_DIR)/curl && autoreconf -fi; \
+	fi
+	mkdir -p $(BUILD_SRC_DIR)/curl_build
+	cd $(BUILD_SRC_DIR)/curl_build && \
+	PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
+	../curl/configure \
+		--prefix=$(BUILD_DEST_DIR) \
+		--enable-static \
+		--disable-shared \
+		--with-openssl=$(BUILD_DEST_DIR) \
+		--with-quiche=$(BUILD_DEST_DIR) \
+		--with-nghttp2 \
+		--without-libpsl \
+		--without-libidn2 \
+		--without-librtmp \
+		--without-libssh2 \
+		--without-brotli \
+		--without-zstd \
+		--disable-ldap \
+		--disable-ldaps \
+		--disable-rtsp \
+		--disable-dict \
+		--disable-telnet \
+		--disable-tftp \
+		--disable-pop3 \
+		--disable-imap \
+		--disable-smtp \
+		--disable-gopher \
+		--disable-mqtt \
+		--disable-manual
+
+libcurl_build: libcurl_config
+	make -C $(BUILD_SRC_DIR)/curl_build install $(MFLAGS)
+	pc_file=$(BUILD_DEST_DIR)/lib/pkgconfig/libcurl.pc; \
+	full_libs=$$(PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
+		pkg-config --static --libs libcurl); \
+	sed -i "s|^Libs:.*|Libs: $$full_libs|" $$pc_file
+
+ffnvcodec_build: prepare_build
+	make -C $(BUILD_SRC_DIR)/nv-codec-headers PREFIX=$(BUILD_DEST_DIR) install
+
+vulkan-headers_build: prepare_build
+	mkdir -p $(BUILD_SRC_DIR)/vulkan-headers/build
+	cmake -S $(BUILD_SRC_DIR)/vulkan-headers -B $(BUILD_SRC_DIR)/vulkan-headers/build
+	cmake --install $(BUILD_SRC_DIR)/vulkan-headers/build --prefix=$(BUILD_DEST_DIR)
+
+ffmpeg_config: ffnvcodec_build vulkan-headers_build
+	mkdir -p $(BUILD_SRC_DIR)/ffmpeg_build
+	cd $(BUILD_SRC_DIR)/ffmpeg_build && \
+	PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
+	../ffmpeg/configure \
+		--prefix=$(BUILD_DEST_DIR) \
+		--extra-version=$(shell echo $(DEB_FFMPEG_REVISION) | cut -d. -f2) \
+		--enable-static \
+		--disable-shared \
+		--pkg-config-flags=--static \
+		--extra-cflags=-I$(BUILD_DEST_DIR)/include \
+		--extra-ldflags=-L$(BUILD_DEST_DIR)/lib \
+		--extra-libs="-ldl" \
+		--enable-gpl \
+		--enable-nonfree \
+		--disable-debug \
+		--disable-doc \
+		--disable-programs \
+		--enable-gcrypt \
+		--enable-gnutls \
+		--enable-ladspa \
+		--enable-libaom \
+		--enable-libass \
+		--enable-libbluray \
+		--enable-libbs2b \
+		--enable-libdav1d \
+		--enable-libfdk-aac \
+		--enable-libgme \
+		--enable-libgsm \
+		--enable-libmodplug \
+		--enable-libmp3lame \
+		--enable-libmysofa \
+		--enable-libopus \
+		--enable-librubberband \
+		--enable-libsoxr \
+		--enable-libspeex \
+		--enable-libssh \
+		--enable-libvidstab \
+		--enable-libvorbis \
+		--enable-libvpx \
+		--enable-libwebp \
+		--enable-libx264 \
+		--enable-libx265 \
+		--enable-libxml2 \
+		--enable-libxvid \
+		--disable-cuvid \
+		--disable-nvenc
+
+ffmpeg_build: ffmpeg_config
+	make -C $(BUILD_SRC_DIR)/ffmpeg_build install $(MFLAGS)
+
+override_dh_auto_configure: libcurl_build ffmpeg_build
+	$(shell sed 's/UNKNOWN/$(shell echo $(DEB_MPV_REVISION) | cut -d. -f2)/' -i VERSION)
+	PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
+	dh_auto_configure -- \
+		-Dlibmpv=true \
+		-Dlibcurl=enabled \
+		-Dcdda=enabled \
+		-Ddvbin=enabled \
+		-Ddvdnav=enabled \
+		-Dgl-x11=enabled \
+		-Djavascript=enabled \
+		$(ARCH_CONFIGURE)
+#		-Dbuild-date=false \
+
+execute_after_dh_auto_install:
+	mv debian/tmp/usr/share/zsh/site-functions debian/tmp/usr/share/zsh/vendor-completions
+
+override_dh_installchangelogs:
+	dh_installchangelogs RELEASE_NOTES
+
+override_dh_compress:
+	dh_compress -X.conf -X.lua
+
+override_dh_gencontrol:
+	dh_gencontrol -- -v$(DEB_MPV_VERSION)
+
+override_dh_auto_clean:
+# 	rm -rf $(BUILD_SRC_DIR)/curl_build
+	rm -rf $(BUILD_SRC_DIR)/ffmpeg_build
+# 	rm -rf $(BUILD_DEST_DIR)
