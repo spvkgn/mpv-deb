@@ -37,47 +37,43 @@ prepare_build:
 
 quiche_build: prepare_build
 	cd $(BUILD_SRC_DIR)/quiche && \
-		cargo-1.88 build --package quiche --release --features ffi --offline
+		cargo-1.88 build --package quiche --release \
+			--features ffi,pkg-config-meta,qlog --offline
+	rm -rf $(BUILD_SRC_DIR)/quiche/boringssl
+	mkdir -p $(BUILD_SRC_DIR)/quiche/boringssl/lib
+	find $(BUILD_SRC_DIR)/quiche/target/release \
+		\( -name libcrypto.a -o -name libssl.a \) \
+		-exec ln -vnf -- '{}' $(BUILD_SRC_DIR)/quiche/boringssl/lib \;
+	bssl_inc=$$(find $(BUILD_SRC_DIR)/quiche/target/release/build \
+		-maxdepth 4 -type d -path '*/out/boringssl/include' | head -1); \
+	if [ -z "$$bssl_inc" ]; then \
+		bssl_inc=$$(find $(BUILD_SRC_DIR)/quiche/target/release/build \
+			-maxdepth 5 -type d -path '*/out/boringssl/src/include' | head -1); \
+	fi; \
+	if [ -z "$$bssl_inc" ]; then \
+		echo "ERROR: BoringSSL include dir not found" >&2; \
+		exit 1; \
+	fi; \
+	ln -vsfn -- "$$bssl_inc" $(BUILD_SRC_DIR)/quiche/boringssl/include
 	install -Dm644 $(BUILD_SRC_DIR)/quiche/quiche/include/quiche.h $(BUILD_DEST_DIR)/include/quiche.h
 	install -Dm644 $(BUILD_SRC_DIR)/quiche/target/release/libquiche.a $(BUILD_DEST_DIR)/lib/libquiche.a
-	install -d $(BUILD_DEST_DIR)/include/openssl $(BUILD_DEST_DIR)/lib/pkgconfig
-	bssl_lib=$$(find $(BUILD_SRC_DIR)/quiche/target/release/build \
-		-path '*/out/build/libssl.a' | head -1); \
-	if [ -z "$$bssl_lib" ]; then \
-		echo "ERROR: libssl.a not found under target/release/build/*/out/build" >&2; \
-		find $(BUILD_SRC_DIR)/quiche/target/release/build -name 'lib*.a' >&2; \
-		exit 1; \
-	fi; \
-	bssl_build=$$(dirname "$$bssl_lib"); \
-	bssl_out=$$(dirname "$$bssl_build"); \
-	install -m644 "$$bssl_build/libssl.a"    $(BUILD_DEST_DIR)/lib/libssl.a; \
-	install -m644 "$$bssl_build/libcrypto.a" $(BUILD_DEST_DIR)/lib/libcrypto.a; \
-	if [ -d "$$bssl_out/boringssl/include/openssl" ]; then \
-		cp -a "$$bssl_out/boringssl/include/openssl/." $(BUILD_DEST_DIR)/include/openssl/; \
-	fi; \
-	if [ -d "$$bssl_build/include/openssl" ]; then \
-		cp -a "$$bssl_build/include/openssl/." $(BUILD_DEST_DIR)/include/openssl/; \
-	fi; \
-	if ! [ -f $(BUILD_DEST_DIR)/include/openssl/ssl.h ]; then \
-		echo "ERROR: BoringSSL headers not found (ssl.h missing)" >&2; \
-		find $(BUILD_SRC_DIR)/quiche/target/release/build -path '*openssl/ssl.h' >&2; \
-		exit 1; \
-	fi
-	printf 'prefix=%s\nexec_prefix=$${prefix}\nlibdir=$${prefix}/lib\nincludedir=$${prefix}/include\n\nName: quiche\nDescription: QUIC/HTTP3 library\nVersion: 0.24.0\nLibs: -L$${libdir} -lquiche -lssl -lcrypto -ldl -lpthread -lm\nCflags: -I$${includedir}\n' \
-		"$(BUILD_DEST_DIR)" > $(BUILD_DEST_DIR)/lib/pkgconfig/quiche.pc
+	install -Dm644 $(BUILD_SRC_DIR)/quiche/target/release/quiche.pc $(BUILD_DEST_DIR)/lib/pkgconfig/quiche.pc
 
 libcurl_config: quiche_build
+	sed -i 's/#if OPENSSL_VERSION_NUMBER < 0x40100000L/#if !defined(OPENSSL_IS_BORINGSSL) \&\& OPENSSL_VERSION_NUMBER < 0x40100000L/' \
+		$(BUILD_SRC_DIR)/curl/lib/vtls/openssl.c
 	if [ ! -x $(BUILD_SRC_DIR)/curl/configure ]; then \
 		cd $(BUILD_SRC_DIR)/curl && autoreconf -fi; \
 	fi
 	mkdir -p $(BUILD_SRC_DIR)/curl_build
 	cd $(BUILD_SRC_DIR)/curl_build && \
 	PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
+	LIBS="-lstdc++ -lpthread -ldl" \
 	../curl/configure \
 		--prefix=$(BUILD_DEST_DIR) \
 		--enable-static \
 		--disable-shared \
-		--with-openssl=$(BUILD_DEST_DIR) \
+		--with-openssl=$(BUILD_SRC_DIR)/quiche/boringssl \
 		--with-quiche=$(BUILD_DEST_DIR) \
 		--with-nghttp2 \
 		--without-libpsl \
