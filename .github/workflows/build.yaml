@@ -3,16 +3,11 @@ name: Build mpv deb (Ubuntu 22.04)
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    # branches: [ main ]
 
 env:
   MPV_REPO:   https://github.com/mpv-player/mpv.git
   MPV_REF:    master
-
-  QUICHE_REPO:        https://github.com/cloudflare/quiche.git
-  QUICHE_REF:         master
-  # QUICHE_REF:         0.30.0
-  QUICHE_VENDOR_REPO: https://github.com/spvkgn/quiche_vendor.git
 
   CURL_REPO:  https://github.com/curl/curl.git
   CURL_REF:   curl-8_23_0
@@ -55,8 +50,6 @@ jobs:
         working-directory: mpv/build_deps
         run: |
           mkdir -p .
-          # quiche: нужны подмодули (boringssl)
-          git clone --recursive --depth 1 --branch "${QUICHE_REF}" "${QUICHE_REPO}" quiche
           # curl
           git clone --depth 1 --branch "${CURL_REF}" "${CURL_REPO}" curl
           # FFmpeg (в нём есть RELEASE, который читает debian/rules)
@@ -67,16 +60,7 @@ jobs:
           git clone --depth 1 --branch "${VULKAN_HEADERS_REF}" "${VULKAN_HEADERS_REPO}" vulkan-headers
 
       # ------------------------------------------------------------------
-      # 4. Vendor для quiche (используется при --offline)
-      # ------------------------------------------------------------------
-      - name: Vendor quiche dependencies
-        working-directory: mpv/build_deps/quiche
-        run: |
-          git clone --depth 1 "${QUICHE_VENDOR_REPO}" /tmp/quiche_vendor
-          cp -r /tmp/quiche_vendor/.cargo /tmp/quiche_vendor/vendor .
-
-      # ------------------------------------------------------------------
-      # 5. Гарантируем наличие MPV_VERSION и VERSION в корне исходников
+      # 4. Гарантируем наличие MPV_VERSION и VERSION в корне исходников
       #    (debian/rules их читает/правит через sed)
       # ------------------------------------------------------------------
       - name: Ensure MPV_VERSION / VERSION exist
@@ -90,15 +74,7 @@ jobs:
           [ -f VERSION ] || echo "UNKNOWN" > VERSION
 
       # ------------------------------------------------------------------
-      # 6. Rust 1.88 из PPA
-      # ------------------------------------------------------------------
-      - name: Add Rust PPA and install cargo-1.88
-        run: |
-          sudo add-apt-repository -y ppa:rust-toolchain/staging
-          sudo apt-get install -y cargo-1.88
-
-      # ------------------------------------------------------------------
-      # 7. Пакетные инструменты
+      # 5. Пакетные инструменты
       # ------------------------------------------------------------------
       - name: Install packaging tools
         run: |
@@ -112,7 +88,7 @@ jobs:
             pkg-config
 
       # ------------------------------------------------------------------
-      # 8. Build-Depends из debian/control
+      # 6. Build-Depends из debian/control
       # ------------------------------------------------------------------
       - name: Install build dependencies
         working-directory: mpv
@@ -126,7 +102,7 @@ jobs:
             debian/control
 
       # ------------------------------------------------------------------
-      # 9. Формируем корректный changelog (формат <2 симв.><YYMMDD>.<hash7>…)
+      # 7. Формируем корректный changelog (формат <2 симв.><YYMMDD>.<hash7>…)
       #    — иначе регулярки DEB_MPV_REVISION / DEB_FFMPEG_REVISION
       #    из debian/rules дадут мусор, и итоговый .deb получит битую версию.
       # ------------------------------------------------------------------
@@ -157,7 +133,7 @@ jobs:
           fi
 
       # ------------------------------------------------------------------
-      # 10. Сборка (debian/rules сам соберёт quiche/curl/ffmpeg/…)
+      # 8. Сборка (debian/rules сам соберёт curl/ffmpeg/…)
       # ------------------------------------------------------------------
       - name: Build package
         working-directory: mpv
@@ -171,18 +147,11 @@ jobs:
         if: always()
         working-directory: mpv
         run: |
-          # ls -la build_libs/lib/lib{ssl,crypto,quiche}.a
-          # ls build_libs/include/openssl/ssl.h build_libs/include/openssl/nid.h build_libs/include/quiche.h
-
-          ls -la build_libs/lib/libquiche.a build_libs/lib/pkgconfig/quiche.pc build_libs/include/quiche.h
-          PKG_CONFIG_PATH=$PWD/build_libs/lib/pkgconfig pkg-config --modversion quiche    # 0.30.0
-
           grep -iE 'brotli|zstd|HTTP3|SSL' build_deps/curl_build/config.log
           grep -E 'Requires|Libs' build_libs/lib/pkgconfig/libcurl.pc
-          # PKG_CONFIG_PATH=$PWD/build_libs/lib/pkgconfig pkg-config --static --libs libcurl | tr ' ' '\n' | grep -E 'quiche|ssl|crypto'
 
       # ------------------------------------------------------------------
-      # 11. Артефакты
+      # 9. Артефакты
       # ------------------------------------------------------------------
       - name: Collect artifacts
         run: |
@@ -194,6 +163,6 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mpv-debs-ubuntu2204
+          name: mpv-libcurl-nghttp3
           path: artifacts/
           if-no-files-found: warn

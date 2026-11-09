@@ -1,3 +1,2 @@
 ffnvcodec-8.1.patch
 56b6200.diff -R
-quiche-cargo-no-qlog-dancer.patch

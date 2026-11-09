@@ -4,7 +4,6 @@ include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/pkg-info.mk
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-export RUST_BACKTRACE=full
 
 OPTIMIZE = $(shell dpkg-buildflags --query-features optimize 2>/dev/null || echo fail)
 ifneq ($(OPTIMIZE), fail)
@@ -32,58 +31,27 @@ DEB_MPV_VERSION=$(shell cat MPV_VERSION | cut -d- -f1)-$(shell echo $(DEB_MPV_RE
 prepare_build:
 	mkdir -p $(BUILD_DEST_DIR)
 
-quiche_prepare: prepare_build
-	if [ ! -f $(BUILD_SRC_DIR)/quiche/.cargo/config.toml ]; then \
-		mkdir -p $(BUILD_SRC_DIR)/quiche/.cargo; \
-		printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "vendor"\n' \
-			> $(BUILD_SRC_DIR)/quiche/.cargo/config.toml; \
-		echo "quiche_prepare: created .cargo/config.toml"; \
-	fi
-	if [ ! -d $(BUILD_SRC_DIR)/quiche/vendor ]; then \
-		echo "ERROR: $(BUILD_SRC_DIR)/quiche/vendor missing" >&2; exit 1; \
-	fi
-
-quiche_build: quiche_prepare
-	cd $(BUILD_SRC_DIR)/quiche && \
-		cargo-1.88 build --package quiche --release --features ffi,pkg-config-meta,qlog --offline
-	rm -rf $(BUILD_SRC_DIR)/quiche/boringssl
-	mkdir -p $(BUILD_SRC_DIR)/quiche/boringssl/lib
-	cd $(BUILD_SRC_DIR)/quiche && \
-		find target/release \
-			\( -name libcrypto.a -o -name libssl.a \) \
-			-exec ln -vnf -- '{}' boringssl/lib \; && \
-		find target/release/build/boring-sys-*/out/boringssl \
-			-maxdepth 1 -name include \
-			-exec ln -vsf -- '../{}' boringssl \;
-	install -vDm644 $(BUILD_SRC_DIR)/quiche/quiche/include/quiche.h $(BUILD_DEST_DIR)/include/quiche.h
-	install -vDm644 $(BUILD_SRC_DIR)/quiche/target/release/libquiche.a $(BUILD_DEST_DIR)/lib/libquiche.a
-	install -vDm644 $(BUILD_SRC_DIR)/quiche/target/release/quiche.pc $(BUILD_DEST_DIR)/lib/pkgconfig/quiche.pc
-
-libcurl_config: quiche_build
-	sed -i 's/#if OPENSSL_VERSION_NUMBER < 0x40100000L/#if !defined(OPENSSL_IS_BORINGSSL) \&\& OPENSSL_VERSION_NUMBER < 0x40100000L/' \
-		$(BUILD_SRC_DIR)/curl/lib/vtls/openssl.c
+libcurl_config: prepare_build
 	if [ ! -x $(BUILD_SRC_DIR)/curl/configure ]; then \
 		cd $(BUILD_SRC_DIR)/curl && autoreconf -fi; \
 	fi
 	mkdir -p $(BUILD_SRC_DIR)/curl_build
 	cd $(BUILD_SRC_DIR)/curl_build && \
 	PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
-	LIBS="-lstdc++ -lpthread -ldl" \
 	../curl/configure \
 		--prefix=$(BUILD_DEST_DIR) \
 		--enable-static \
 		--disable-shared \
-		--with-openssl=$(BUILD_SRC_DIR)/quiche/boringssl \
-		--with-quiche=$(BUILD_DEST_DIR) \
+		--with-gnutls \
 		--with-nghttp2 \
+		--with-nghttp3 \
+		--with-ngtcp2 \
 		--with-brotli \
 		--with-zstd \
 		--with-libidn2 \
 		--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
 		--with-ca-path=/etc/ssl/certs \
-		--with-ca-fallback \
 		--without-libpsl \
-		--without-librtmp \
 		--without-libssh2 \
 		--disable-ldap \
 		--disable-ldaps \
@@ -98,14 +66,13 @@ libcurl_config: quiche_build
 		--disable-mqtt \
 		--disable-manual \
 		--disable-docs
-# 		--enable-proxy-http3
 
 libcurl_build: libcurl_config
 	make -C $(BUILD_SRC_DIR)/curl_build install $(MFLAGS)
-	pc_file=$(BUILD_DEST_DIR)/lib/pkgconfig/libcurl.pc; \
-	full_libs=$$(PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
-		pkg-config --static --libs libcurl); \
-	sed -i "s|^Libs:.*|Libs: $$full_libs|" $$pc_file
+# 	pc_file=$(BUILD_DEST_DIR)/lib/pkgconfig/libcurl.pc; \
+# 	full_libs=$$(PKG_CONFIG_PATH=$(BUILD_DEST_DIR)/lib/pkgconfig \
+# 		pkg-config --static --libs libcurl); \
+# 	sed -i "s|^Libs:.*|Libs: $$full_libs|" $$pc_file
 
 ffnvcodec_build: prepare_build
 	make -C $(BUILD_SRC_DIR)/nv-codec-headers PREFIX=$(BUILD_DEST_DIR) install
