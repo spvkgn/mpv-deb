@@ -4,7 +4,7 @@ include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/pkg-info.mk
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-#export RUST_BACKTRACE=full
+export RUST_BACKTRACE=full
 
 OPTIMIZE = $(shell dpkg-buildflags --query-features optimize 2>/dev/null || echo fail)
 ifneq ($(OPTIMIZE), fail)
@@ -16,9 +16,6 @@ export DEB_BUILD_OPTIONS += noddebs
 
 BUILD_SRC_DIR = $(CURDIR)/build_deps
 BUILD_DEST_DIR = $(CURDIR)/build_libs
-
-# BSSL_BUILD = $(BUILD_SRC_DIR)/quiche/deps/boringssl/build
-# BSSL_INCLUDE = $(BUILD_SRC_DIR)/quiche/deps/boringssl/src/include
 
 ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
 	NUMJOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
@@ -37,27 +34,19 @@ prepare_build:
 
 quiche_build: prepare_build
 	cd $(BUILD_SRC_DIR)/quiche && \
-		cargo-1.88 build --package quiche --release \
-			--features ffi,pkg-config-meta,qlog --offline
+		cargo-1.88 build --package quiche --release --features ffi,pkg-config-meta,qlog --offline
 	rm -rf $(BUILD_SRC_DIR)/quiche/boringssl
 	mkdir -p $(BUILD_SRC_DIR)/quiche/boringssl/lib
-	find $(BUILD_SRC_DIR)/quiche/target/release \
-		\( -name libcrypto.a -o -name libssl.a \) \
-		-exec ln -vnf -- '{}' $(BUILD_SRC_DIR)/quiche/boringssl/lib \;
-	bssl_inc=$$(find $(BUILD_SRC_DIR)/quiche/target/release/build \
-		-maxdepth 4 -type d -path '*/out/boringssl/include' | head -1); \
-	if [ -z "$$bssl_inc" ]; then \
-		bssl_inc=$$(find $(BUILD_SRC_DIR)/quiche/target/release/build \
-			-maxdepth 5 -type d -path '*/out/boringssl/src/include' | head -1); \
-	fi; \
-	if [ -z "$$bssl_inc" ]; then \
-		echo "ERROR: BoringSSL include dir not found" >&2; \
-		exit 1; \
-	fi; \
-	ln -vsfn -- "$$bssl_inc" $(BUILD_SRC_DIR)/quiche/boringssl/include
-	install -Dm644 $(BUILD_SRC_DIR)/quiche/quiche/include/quiche.h $(BUILD_DEST_DIR)/include/quiche.h
-	install -Dm644 $(BUILD_SRC_DIR)/quiche/target/release/libquiche.a $(BUILD_DEST_DIR)/lib/libquiche.a
-	install -Dm644 $(BUILD_SRC_DIR)/quiche/target/release/quiche.pc $(BUILD_DEST_DIR)/lib/pkgconfig/quiche.pc
+	cd $(BUILD_SRC_DIR)/quiche && \
+		find target/release \
+			\( -name libcrypto.a -o -name libssl.a \) \
+			-exec ln -vnf -- '{}' boringssl/lib \; && \
+		find target/release/build/boring-sys-*/out/boringssl \
+			-maxdepth 1 -name include \
+			-exec ln -vsf -- '../{}' boringssl \;
+	install -vDm644 $(BUILD_SRC_DIR)/quiche/quiche/include/quiche.h $(BUILD_DEST_DIR)/include/quiche.h
+	install -vDm644 $(BUILD_SRC_DIR)/quiche/target/release/libquiche.a $(BUILD_DEST_DIR)/lib/libquiche.a
+	install -vDm644 $(BUILD_SRC_DIR)/quiche/target/release/quiche.pc $(BUILD_DEST_DIR)/lib/pkgconfig/quiche.pc
 
 libcurl_config: quiche_build
 	sed -i 's/#if OPENSSL_VERSION_NUMBER < 0x40100000L/#if !defined(OPENSSL_IS_BORINGSSL) \&\& OPENSSL_VERSION_NUMBER < 0x40100000L/' \
@@ -78,8 +67,11 @@ libcurl_config: quiche_build
 		--with-nghttp2 \
 		--with-brotli \
 		--with-zstd \
+		--with-libidn2 \
+		--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+		--with-ca-path=/etc/ssl/certs \
+		--with-ca-fallback \
 		--without-libpsl \
-		--without-libidn2 \
 		--without-librtmp \
 		--without-libssh2 \
 		--disable-ldap \
@@ -93,7 +85,9 @@ libcurl_config: quiche_build
 		--disable-smtp \
 		--disable-gopher \
 		--disable-mqtt \
-		--disable-manual
+		--disable-manual \
+		--disable-docs \
+		--enable-proxy-http3
 
 libcurl_build: libcurl_config
 	make -C $(BUILD_SRC_DIR)/curl_build install $(MFLAGS)
