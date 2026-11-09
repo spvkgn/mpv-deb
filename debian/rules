@@ -32,7 +32,18 @@ DEB_MPV_VERSION=$(shell cat MPV_VERSION | cut -d- -f1)-$(shell echo $(DEB_MPV_RE
 prepare_build:
 	mkdir -p $(BUILD_DEST_DIR)
 
-quiche_build: prepare_build
+quiche_prepare: prepare_build
+	if [ ! -f $(BUILD_SRC_DIR)/quiche/.cargo/config.toml ]; then \
+		mkdir -p $(BUILD_SRC_DIR)/quiche/.cargo; \
+		printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "vendor"\n' \
+			> $(BUILD_SRC_DIR)/quiche/.cargo/config.toml; \
+		echo "quiche_prepare: created .cargo/config.toml"; \
+	fi
+	if [ ! -d $(BUILD_SRC_DIR)/quiche/vendor ]; then \
+		echo "ERROR: $(BUILD_SRC_DIR)/quiche/vendor missing" >&2; exit 1; \
+	fi
+
+quiche_build: quiche_prepare
 	cd $(BUILD_SRC_DIR)/quiche && \
 		cargo-1.88 build --package quiche --release --features ffi,pkg-config-meta,qlog --offline
 	rm -rf $(BUILD_SRC_DIR)/quiche/boringssl
@@ -86,8 +97,8 @@ libcurl_config: quiche_build
 		--disable-gopher \
 		--disable-mqtt \
 		--disable-manual \
-		--disable-docs \
-		--enable-proxy-http3
+		--disable-docs
+# 		--enable-proxy-http3
 
 libcurl_build: libcurl_config
 	make -C $(BUILD_SRC_DIR)/curl_build install $(MFLAGS)
@@ -182,6 +193,5 @@ override_dh_gencontrol:
 	dh_gencontrol -- -v$(DEB_MPV_VERSION)
 
 override_dh_auto_clean:
-# 	rm -rf $(BUILD_SRC_DIR)/curl_build
 	rm -rf $(BUILD_SRC_DIR)/ffmpeg_build
-# 	rm -rf $(BUILD_DEST_DIR)
+	rm -rf $(BUILD_DEST_DIR)

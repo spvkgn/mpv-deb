@@ -18,13 +18,13 @@ env:
   CURL_REF:   curl-8_23_0
 
   FFMPEG_REPO: https://github.com/FFmpeg/FFmpeg.git
-  FFMPEG_REF:  n8.1.3
+  FFMPEG_REF:  release/8.1
 
   NV_CODEC_HEADERS_REPO: https://github.com/FFmpeg/nv-codec-headers.git
-  NV_CODEC_HEADERS_REF:  n8.1.24.15
+  NV_CODEC_HEADERS_REF:  sdk/8.1
 
   VULKAN_HEADERS_REPO: https://github.com/KhronosGroup/Vulkan-Headers.git
-  VULKAN_HEADERS_REF:  v1.4.321
+  VULKAN_HEADERS_REF:  main
 
 jobs:
   build-deb:
@@ -137,13 +137,15 @@ jobs:
           DEBFULLNAME: "GitHub Actions"
         run: |
           if [ ! -f debian/changelog ] || grep -q "Fake entry" debian/changelog; then
-            D=$(date +%y%m%d)
+            D=$(git log -1 --format=%ct 2>/dev/null | xargs -r -I{} date -u -d @{} +%y%m%d 2>/dev/null \
+                || date -u +%y%m%d)
             SHA=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "0000000")
-            FD=$(cd build_deps/ffmpeg && git log -1 --format=%ct 2>/dev/null \
+            FV=$(cat build_deps/ffmpeg/RELEASE | cut -d- -f1)
+            FD=$(git -C build_deps/ffmpeg log -1 --format=%ct 2>/dev/null \
                  | xargs -r -I{} date -u -d @{} +%y%m%d 2>/dev/null \
                  || date -u +%y%m%d)
-            FSHA=$(cd build_deps/ffmpeg && git rev-parse --short=7 HEAD 2>/dev/null || echo "0000000")
-            VER="0.${D}.${SHA}+ffmpeg8.0-ff${FD}.${FSHA}~ubuntu22.04"
+            FSHA=$(git -C build_deps/ffmpeg rev-parse --short=7 HEAD 2>/dev/null || echo "0000000")
+            VER="0.${D}.${SHA}+ffmpeg${FV}-${FD}.${FSHA}~ubuntu22.04"
 
             rm -f debian/changelog
             dch --create \
